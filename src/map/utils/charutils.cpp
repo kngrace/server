@@ -591,7 +591,7 @@ namespace charutils
         }
 
         // LoadFromCharJobsSQL
-        fmtQuery = "SELECT unlocked, genkai, war, mnk, whm, blm, rdm, thf, pld, drk, bst, brd, rng, sam, nin, drg, smn, blu, cor, pup, dnc, sch, geo, run "
+        fmtQuery = "SELECT unlocked, genkai, war, mnk, whm, blm, rdm, thf, pld, drk, bst, brd, rng, sam, nin, drg, smn, blu, cor, pup, dnc, sch, geo, run, mon "
                    "FROM char_jobs "
                    "WHERE charid = (?)";
 
@@ -623,10 +623,11 @@ namespace charutils
             PChar->jobs.job[JOB_SCH] = rset->get<uint8>("sch");
             PChar->jobs.job[JOB_GEO] = rset->get<uint8>("geo");
             PChar->jobs.job[JOB_RUN] = rset->get<uint8>("run");
+            PChar->jobs.job[JOB_MON] = rset->get<uint8>("mon");
         }
 
         // LoadFromCharExpSQL
-        fmtQuery = "SELECT mode, war, mnk, whm, blm, rdm, thf, pld, drk, bst, brd, rng, sam, nin, drg, smn, blu, cor, pup, dnc, sch, geo, run, merits, limits "
+        fmtQuery = "SELECT mode, war, mnk, whm, blm, rdm, thf, pld, drk, bst, brd, rng, sam, nin, drg, smn, blu, cor, pup, dnc, sch, geo, run, mon, merits, limits "
                    "FROM char_exp "
                    "WHERE charid = (?)";
 
@@ -657,6 +658,7 @@ namespace charutils
             PChar->jobs.exp[JOB_SCH] = rset->get<uint16>("sch");
             PChar->jobs.exp[JOB_GEO] = rset->get<uint16>("geo");
             PChar->jobs.exp[JOB_RUN] = rset->get<uint16>("run");
+            PChar->jobs.exp[JOB_MON] = rset->get<uint16>("mon");
 
             meritPoints = rset->get<uint8>("merits");
             limitPoints = rset->get<uint16>("limits");
@@ -832,6 +834,8 @@ namespace charutils
             PChar->m_isGMHidden = gmHidden;
         }
 
+        // We've loaded all of the JOB_MON things from char_jobs and char_exp,
+        // so now we will re-populate anything remaining from char_monstrosity
         monstrosity::TryPopulateMonstrosityData(PChar);
 
         charutils::LoadInventory(PChar);
@@ -4967,6 +4971,7 @@ namespace charutils
         {
             exp = (uint32)(exp * settings::get<float>("map.EXP_RATE"));
         }
+
         uint16 currentExp  = PChar->jobs.exp[PChar->GetMJob()];
         bool   onLimitMode = false;
 
@@ -4976,9 +4981,21 @@ namespace charutils
             onLimitMode = true;
         }
 
+        const auto getExpNextLvlFn = [PChar](uint8 charlvl) -> uint32
+        {
+            if (PChar->m_PMonstrosity)
+            {
+                return monstrosity::GetExpNEXTLevel(charlvl);
+            }
+            else
+            {
+                return charutils::GetExpNEXTLevel(charlvl);
+            }
+        };
+
         // we check if the player is level capped and max exp..
         if (PChar->jobs.job[PChar->GetMJob()] > 74 && PChar->jobs.job[PChar->GetMJob()] >= PChar->jobs.genkai &&
-            PChar->jobs.exp[PChar->GetMJob()] == GetExpNEXTLevel(PChar->jobs.job[PChar->GetMJob()]) - 1)
+            PChar->jobs.exp[PChar->GetMJob()] == getExpNextLvlFn(PChar->jobs.job[PChar->GetMJob()]) - 1)
         {
             onLimitMode = true;
         }
@@ -5082,11 +5099,11 @@ namespace charutils
         PChar->PAI->EventHandler.triggerListener("EXPERIENCE_POINTS", PChar, PMob, exp);
 
         // Player levels up
-        if ((currentExp + exp) >= GetExpNEXTLevel(PChar->jobs.job[PChar->GetMJob()]) && !onLimitMode)
+        if ((currentExp + exp) >= getExpNextLvlFn(PChar->jobs.job[PChar->GetMJob()]) && !onLimitMode)
         {
             if (PChar->jobs.job[PChar->GetMJob()] >= PChar->jobs.genkai)
             {
-                PChar->jobs.exp[PChar->GetMJob()] = GetExpNEXTLevel(PChar->jobs.job[PChar->GetMJob()]) - 1;
+                PChar->jobs.exp[PChar->GetMJob()] = getExpNextLvlFn(PChar->jobs.job[PChar->GetMJob()]) - 1;
                 if (PChar->PParty && PChar->PParty->GetSyncTarget() == PChar)
                 {
                     PChar->PParty->SetSyncTarget("", MsgStd::LevelSyncRemoveIneligibleExp);
@@ -5094,11 +5111,13 @@ namespace charutils
             }
             else
             {
-                PChar->jobs.exp[PChar->GetMJob()] -= GetExpNEXTLevel(PChar->jobs.job[PChar->GetMJob()]);
-                if (PChar->jobs.exp[PChar->GetMJob()] >= GetExpNEXTLevel(PChar->jobs.job[PChar->GetMJob()] + 1))
+                PChar->jobs.exp[PChar->GetMJob()] -= getExpNextLvlFn(PChar->jobs.job[PChar->GetMJob()]);
+
+                if (PChar->jobs.exp[PChar->GetMJob()] >= getExpNextLvlFn(PChar->jobs.job[PChar->GetMJob()] + 1))
                 {
-                    PChar->jobs.exp[PChar->GetMJob()] = GetExpNEXTLevel(PChar->jobs.job[PChar->GetMJob()] + 1) - 1;
+                    PChar->jobs.exp[PChar->GetMJob()] = getExpNextLvlFn(PChar->jobs.job[PChar->GetMJob()] + 1) - 1;
                 }
+
                 PChar->jobs.job[PChar->GetMJob()] += 1;
 
                 if (PChar->m_LevelRestriction == 0 || PChar->m_LevelRestriction > PChar->GetMLevel())
@@ -5114,6 +5133,7 @@ namespace charutils
                     BuildingCharWeaponSkills(PChar);
                     puppetutils::LoadAutomaton(PChar);
                 }
+
                 PChar->PLatentEffectContainer->CheckLatentsJobLevel();
 
                 if (PChar->PParty != nullptr)
@@ -5122,6 +5142,7 @@ namespace charutils
                     {
                         PChar->PParty->RefreshSync();
                     }
+
                     PChar->PParty->ReloadParty();
                 }
 
@@ -5660,12 +5681,6 @@ namespace charutils
             return;
         }
 
-        // Monstrosity job and level data is handled elsewhere, bail out now
-        if (job == JOB_MON)
-        {
-            return;
-        }
-
         const char* fmtQuery = "";
 
         switch (job)
@@ -5736,6 +5751,9 @@ namespace charutils
             case JOB_RUN:
                 fmtQuery = "UPDATE char_jobs SET unlocked = %u, run = %u WHERE charid = %u LIMIT 1";
                 break;
+            case JOB_MON:
+                fmtQuery = "UPDATE char_jobs SET unlocked = %u, mon = %u WHERE charid = %u LIMIT 1";
+                break;
             default:
                 fmtQuery = "";
                 break;
@@ -5753,13 +5771,7 @@ namespace charutils
             return;
         }
 
-        // Monstrosity exp data is handled elsewhere, bail out now
-        if (job == JOB_MON)
-        {
-            return;
-        }
-
-        const char* Query = "";
+       const char* Query = "";
 
         switch (job)
         {
@@ -5828,6 +5840,9 @@ namespace charutils
                 break;
             case JOB_RUN:
                 Query = "UPDATE char_exp SET run = %u, merits = %u, limits = %u WHERE charid = %u";
+                break;
+            case JOB_MON:
+                Query = "UPDATE char_exp SET mon = %u, merits = %u, limits = %u WHERE charid = %u";
                 break;
             default:
                 Query = "";
